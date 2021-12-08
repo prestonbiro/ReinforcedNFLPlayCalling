@@ -458,8 +458,7 @@ runProbGen <- function(dataY,LOS){
 #   Spits out the probability of a play gaining or losing a specific number of 
 #   yards for a given DOWN, DIST, and LOS, and the corresponding action.
 findProbs <- function(DOWN,DIST,LOS,PLAYTYPE){
-  #Final product. Finds the probability of every event occurring in a pass or 
-  #   run play.
+  #Finds the probability of every event occurring in a pass or run play.
   #Spits out two things: 
   #   First, and most importantly a dataframe with the 
   #     number of yards gained (or lost) listed as X and the probability of that
