@@ -33,9 +33,13 @@ load('PuntProbs.RData')
 #   staticTurnOverStates[12] should be the utility of DOWN = 1, DIST = 10, and 
 #   LOS = 12. This should also be the same as findStateUtil(1,10,12,'Offense'), 
 #   but will probably be slightly different (off by a rounding error)
-stateStore <- array(NA,4,99,99)
-actionStore <- array(NA,4,4,99,99)
+stateStore <- array(NA,c(4,99,99))
+actionStore <- array(NA,c(4,4,99,99))
 staticTurnOverStates <- seq(6,-1,length.out = 99)
+
+#This isn't acutally necessary for the math, but it helps to store the best 
+#   action just for future lookup purposes
+optActStore <- array(NA,c(4,99,99))
 
 #Muffed punt percentage, taken directly from the following link
 #https://www.footballperspective.com/more-on-fumbling-and-recovery-rates-defense-and-special-teams/
@@ -156,16 +160,6 @@ findFutureStates <- function(curDown,curDist,curLOS){
   return(storedNextStates)
 }
 
-# q = findFutureStates(4,10,80)
-# off = ggplot(q %>% filter(NextTeam == 'Offense')) + 
-#   geom_point(aes(x = LOS,y = RunProb),color = 'red') +
-#   geom_point(aes(x = LOS,y = PassProb),color = 'blue')
-# def = ggplot(q %>% filter(NextTeam == 'Defense')) + 
-#   geom_point(aes(x = LOS,y = RunProb),color = 'red') +
-#   geom_point(aes(x = LOS,y = PassProb),color = 'blue')
-# grid.arrange(off,def,nrow = 2)
-
-
 #The big boy. Give it a down, distance, and line of scrimmage, and it'll tell 
 #   you how many points you should get if you call the right play every time. If
 #   you want details on how we got to here, read the paper, because we can't 
@@ -175,23 +169,6 @@ findFutureStates <- function(curDown,curDist,curLOS){
 findStateUtil <- function(curDown,curDist,curLOS,curTeam = 'Offense'){
   #Calculates the value of being in a state by finding the max of the potential 
   #   actions. 
-  
-  #First look if terminal state. This shouldn't really be called,
-  # if(is.na(curDown)){
-  #   if(curLOS == 0) return(7)
-  #   else if(curLOS == -100) return(-7)
-  #   else if(curLOS == 100) return(-2)
-  #   else print('Unknown State')
-  # }
-  # else{
-  #   #Next, look if already stored, assuming we dont want it reset
-  #   stateUtil = subStateStore[curDown,curDist,curLOS]
-  #   if(!is.na(stateUtil) & curTeam == 'Offense') {
-  #     # if(curTeam == 'Offense') return(stateUtil)
-  #     # else return(-stateUtil)
-  #     return(stateUtil)
-  #   }
-  # }
   
   #If we've already stored the state value, pull it
   stateUtil = stateStore[curDown,curDist,curLOS]
@@ -204,17 +181,23 @@ findStateUtil <- function(curDown,curDist,curLOS,curTeam = 'Offense'){
   if(curTeam == 'Defense') return(-staticTurnOverStates[curLOS])
   
   #Else, compute it manually
+  print(paste(curDown,curDist,curLOS))
+  
   #Normal States
   nextStateDf <- findFutureStates(curDown,curDist,curLOS)
+  
+  #Look up the action value for all the different options, report the best
   bestUtil = -100
-  for(playIx in playsToSample){
-    tempUtil = findActionUtil(curDown,curDist,curLOS,playIx,nextStateDf)
+  playsToSample = c('RUN','PASS')
+  for(play in playsToSample){
+    tempUtil = findActionUtil(curDown,curDist,curLOS,play,nextStateDf)
     if(tempUtil > bestUtil){
-      optAction = mainCalls[playIx]
+      optAction = play
       bestUtil = tempUtil
     }
   }
   
+  #If its 4th down, look up FG and PUNT too
   if(curDown == 4){
     puntUtil = findActionUtil(curDown,curDist,curLOS,'PUNT',nextStateDf)
     if(puntUtil > bestUtil) {
@@ -227,14 +210,120 @@ findStateUtil <- function(curDown,curDist,curLOS,curTeam = 'Offense'){
       bestUtil = fgUtil
     }
   }
-  subStateStore[curDown,curDist,curLOS] <<- bestUtil
+  
+  #Store the utility and optimal action for dynamic programming stuff
+  stateStore[curDown,curDist,curLOS] <<- bestUtil
   optActStore[curDown,curDist,curLOS] <<- optAction
-  if(curLOS > 0) return(bestUtil)
-  else return(-bestUtil)
+  return(bestUtil)
+}
+
+#The big boy's little brother, but he's still pretty big. Give it a down, 
+#   distance, line of scrimmage, and a specific action, and it'll tell you how 
+#   many points you should expect to get, given you take this action and all 
+#   other recommended actions at the subsequent states reached. 
+findActionUtil <- function(curDown,curDist,curLOS,curPlay,nextStates = NULL){
+  playIx = switch(curPlay,'PASS' = 1,'RUN' = 2,'FG' = 3,'PUNT' = 4)
+
+  #First check if we have it
+  actUtil = actionStore[playIx,curDown,curDist,curLOS]
+  if(!is.na(actUtil)) {
+    return(actUtil)
+  }
+  
+  #If we don't, or we just wanna reset, lets find it
+  
+  #First make sure we have a state frame
+  if(is.null(nextStates)) nextStates = findFutureStates(curDown,curDist,curLOS)
+  
+  if(curPlay == 'PUNT'){
+    #Punt
+    
+    #Its gotten to be pretty rare for teams to punt from within 40 yards, so
+    #   we assume all yard lines less than 40 to have the same punt dist as a 
+    #   punt from the 40. In hindsight, this was probably too aggressive, but
+    #   this is fixed in future methods
+    if(curLOS < 40) losForCalcs = 40
+    else losForCalcs = curLOS
+    
+    #Put together the future states for a punt, similar to FindFutureStates func
+    curPuntDf = data.frame(Util = staticTurnOverStates)
+    curPuntDf$Prob = punt.df[(punt.df$ResultLOS > 0),paste('LOS=',losForCalcs,sep='')]
+    
+    #For muffed punts, will assume (incorrectly) that if it happens, it will 
+    #   happen at the location of the punt's landing spot, which we also assume 
+    #   to be the point with the highest probability density
+    muffPuntLOS = punt.df[which(punt.df[,paste('LOS=',losForCalcs,sep='')] == 
+                          max(punt.df[,paste('LOS=',losForCalcs,sep='')])),
+                          'ResultLOS']
+    
+    #The utility for an offense recovering a muffed punt is just the utility of
+    #   having a first and 10 at that location, from the offenses perspective
+    offRecUtil = staticTurnOverStates[100 - muffPuntLOS]
+    
+    #The utility for returning a punt is the weighted sum of the probabilities
+    #   of returning the ball to each los by the utility of that first and ten 
+    #   or goal spot, plus the return touchdown prob, all from offense view
+    retPuntUtil = -sum(curPuntDf$Util * curPuntDf$Prob) - 
+      7 * punt.df[1,paste('LOS=',losForCalcs,sep='')]
+    
+    #Add it up, weighinig the muff punt percentage properly
+    totalPuntUtil = muffPuntPerc * offRecUtil + (1 - muffPuntPerc) * retPuntUtil
+    actionStore[playIx,curDown,curDist,curLOS] <<- totalPuntUtil
+    return(totalPuntUtil)
+  }
+  else if(curPlay == 'FG'){
+    #FG
+    
+    #Find probability of making fg
+    curFGProb = fg.df[fg.df$LOS == curLOS,'Prob']
+    
+    #Find util of 1st and 10 if missed
+    missLOS = 100 - curLOS
+    utilIfMissed = staticTurnOverStates[missLOS]
+    
+    #Overall Utility is 3 * probMaking - (1-probMaking) * util if missed
+    fgUtil = 3 * curFGProb + utilIfMissed * (1 - curFGProb)
+    actionStore[playIx,curDown,curDist,curLOS] <<- fgUtil
+    return(fgUtil)
+  }
+  else{
+    #Find utilities
+    nextStates$StateUtil = NA
+    for(ix in 1:nrow(nextStates)){
+      if(nextStates[ix,'NextTeam'] == 'Offense'){
+        #For the states where the offense keeps the ball, we pull the utility 
+        #   normally by looking ahead
+        nextStates[ix,'StateUtil'] = findStateUtil(curDown = nextStates[ix,'DOWN'],
+                                                   curDist = nextStates[ix,'DIST'],
+                                                   curLOS = nextStates[ix,'LOS'])
+      }
+      else if(nextStates[ix,'NextTeam'] == 'Defense'){
+        #For the states where the defense takes the ball, we pull the utility 
+        #   by using the semiterminal utility values
+        nextStates[ix,'StateUtil'] = staticTurnOverStates[nextStates[ix,'LOS']]
+      }
+      else{
+        #If its a scoring state, the utility is the points!
+        nextStates[ix,'StateUtil'] = nextStates[ix,'SCORE']
+      }
+    }
+    
+    #Pull the right column to use for probabilities
+    
+    #Find overall action utility
+    if(curPlay == 'RUN') probCol = nextStates$RunProb
+    else probCol = nextStates$PassProb
+    
+    #Take that weighted sum
+    actionUtil = sum(probCol * nextStates$StateUtil) 
+    actionStore[playIx,curDown,curDist,curLOS] <<- actionUtil
+    return(actionUtil)
+  } 
 }
 
 
-
+#Test it out!
+findStateUtil(3,1,1)
 
 
 
