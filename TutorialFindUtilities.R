@@ -41,6 +41,9 @@ staticTurnOverStates <- seq(6,-1,length.out = 99)
 #   action just for future lookup purposes
 optActStore <- array(NA,c(4,99,99))
 
+#Load your probabilities, if you haven't already
+load('ProbArrayStorage.Rdata')
+
 #Muffed punt percentage, taken directly from the following link
 #https://www.footballperspective.com/more-on-fumbling-and-recovery-rates-defense-and-special-teams/
 muffPuntPerc = .0115 
@@ -62,7 +65,7 @@ findFutureStates <- function(curDown,curDist,curLOS){
   storedNextStates = data.frame()
   
   #Get Those Probabilities
-  futureProbs = advGetAndGiveProb(curDown,curDist,curLOS)
+  futureProbs = getAndGiveProb(curDown,curDist,curLOS)
   runProbs = futureProbs$RunProb
   passProbs = futureProbs$PassProb
   
@@ -166,13 +169,13 @@ findFutureStates <- function(curDown,curDist,curLOS){
 #   explain it in the comments. Basically we're just going to take a weighted
 #   average of the future states based off the probability of getting to each
 #   of them from the given state, given the best action is taken.
-findStateUtil <- function(curDown,curDist,curLOS,curTeam = 'Offense'){
+findStateUtil <- function(curDown,curDist,curLOS,curTeam = 'Offense',reset = F){
   #Calculates the value of being in a state by finding the max of the potential 
   #   actions. 
   
   #If we've already stored the state value, pull it
   stateUtil = stateStore[curDown,curDist,curLOS]
-  if(!is.na(stateUtil) & curTeam == 'Offense') {
+  if(!is.na(stateUtil) & curTeam == 'Offense' & !reset) {
     return(stateUtil)
   }
   
@@ -190,7 +193,7 @@ findStateUtil <- function(curDown,curDist,curLOS,curTeam = 'Offense'){
   bestUtil = -100
   playsToSample = c('RUN','PASS')
   for(play in playsToSample){
-    tempUtil = findActionUtil(curDown,curDist,curLOS,play,nextStateDf)
+    tempUtil = findActionUtil(curDown,curDist,curLOS,play,nextStateDf,reset)
     if(tempUtil > bestUtil){
       optAction = play
       bestUtil = tempUtil
@@ -199,12 +202,12 @@ findStateUtil <- function(curDown,curDist,curLOS,curTeam = 'Offense'){
   
   #If its 4th down, look up FG and PUNT too
   if(curDown == 4){
-    puntUtil = findActionUtil(curDown,curDist,curLOS,'PUNT',nextStateDf)
+    puntUtil = findActionUtil(curDown,curDist,curLOS,'PUNT',nextStateDf,reset)
     if(puntUtil > bestUtil) {
       optAction = 'PUNT'
       bestUtil = puntUtil
     }
-    fgUtil = findActionUtil(curDown,curDist,curLOS,'FG',nextStateDf)
+    fgUtil = findActionUtil(curDown,curDist,curLOS,'FG',nextStateDf,reset)
     if(fgUtil > bestUtil){
       optAction = 'FG'
       bestUtil = fgUtil
@@ -221,12 +224,12 @@ findStateUtil <- function(curDown,curDist,curLOS,curTeam = 'Offense'){
 #   distance, line of scrimmage, and a specific action, and it'll tell you how 
 #   many points you should expect to get, given you take this action and all 
 #   other recommended actions at the subsequent states reached. 
-findActionUtil <- function(curDown,curDist,curLOS,curPlay,nextStates = NULL){
+findActionUtil <- function(curDown,curDist,curLOS,curPlay,nextStates = NULL,reset = F){
   playIx = switch(curPlay,'PASS' = 1,'RUN' = 2,'FG' = 3,'PUNT' = 4)
 
   #First check if we have it
   actUtil = actionStore[playIx,curDown,curDist,curLOS]
-  if(!is.na(actUtil)) {
+  if(!is.na(actUtil) & !reset) {
     return(actUtil)
   }
   
@@ -300,7 +303,7 @@ findActionUtil <- function(curDown,curDist,curLOS,curPlay,nextStates = NULL){
       else if(nextStates[ix,'NextTeam'] == 'Defense'){
         #For the states where the defense takes the ball, we pull the utility 
         #   by using the semiterminal utility values
-        nextStates[ix,'StateUtil'] = staticTurnOverStates[nextStates[ix,'LOS']]
+        nextStates[ix,'StateUtil'] = -staticTurnOverStates[nextStates[ix,'LOS']]
       }
       else{
         #If its a scoring state, the utility is the points!
@@ -323,11 +326,82 @@ findActionUtil <- function(curDown,curDist,curLOS,curPlay,nextStates = NULL){
 
 
 #Test it out!
-findStateUtil(3,1,1)
+#This down, dist, los combination is preloaded on purpose, as its the easiest
+findStateUtil(curDown = 4,curDist = 1,curLOS = 1)
+
+#The next easiest would be 4, 2, 2, or any other 4th and goal scenario
+#From there, looking at 3rd and 1 from the 1 is interesting
+findStateUtil(curDown = 3,curDist = 1,curLOS = 1,reset = T)
+
+#When you see how things are going, then try a first and 10, but not too far out
+findStateUtil(curDown = 1,curDist = 10,curLOS = 10,reset = T)
+
+#Once you get into territory where a first down can actually be achieved, things
+#   start taking a while, so don't get too crazy
+findStateUtil(curDown = 1,curDist = 10,curLOS = 12,reset = T)
+
+#Once you understand whats going on, load the following file which will have a
+#   bunch of precomputed utilities so you can just see the final results
+
+load(file = 'TutorialUtilities.RData')
 
 
+#To obtain the utilies quickly, here's a nice function that will run through and
+#   calculate them until we reach convergence. There's also a nice RData file
+#   I've included that has the plays in the correct order for you to call them
+#   to minimize duplicate calls. This is actually algorithm 2 in the paper, with
+#   the math parts farmed out to the findStateUtility and findActionUtility 
+#   functions
 
+load('OptimizationDependencyList.Rdata')
+optimizeUtilities <- function(termThresh = 1e-6,dependencyList = depList,verbose = T){
+  N = nrow(dependencyList)
+  
+  #Initialize some vectors
+  totChange = 1000
+  oldStoredUtils = rep(0,N)
+  newStoredUtils = rep(NA,N)
+  plot(1:99,staticTurnOverStates,ylim = c(-3,7))
+  
+  #While the values are still finding convergence, lets keep updating them
+  while(totChange > termThresh){
+    #Orders the calculations in the order that is most convenient
+    #It naturally will not be able to complete the math without running the 
+    #   values it is dependent upon, so the dependency list isn't necessary, but
+    #   it does reduce the amount of times it is trying to skip steps
+    for(i in 1:nrow(dependencyList)){
+      state = dependencyList[i,]
+      down = state$DOWN; dist = state$DIST; los = state$LOS
+      #I like printing a lot so I know where its at
+      if(verbose)   print(paste(down,dist,los))
+      #Just calculate that utility baby
+      newStoredUtils[i] = findStateUtil(down,dist,los,reset = T)
+    }
+    
+    #Finds the total squared change in the previous iteration
+    totChange = sum((newStoredUtils - oldStoredUtils)^2,na.rm = T)
+    oldStoredUtils = newStoredUtils
+    
+    print('loop complete')
+    print(totChange)
+    firstVals = rep(NA,99)
+    
+    #Update the semi-terminal utilities, the most important values
+    for(i in 1:99) firstVals[i] = findStateUtil(1,ifelse(i < 10,i,10),i)
+    staticTurnOverStates <<- firstVals
+    
+    #Plot them for good measure!
+    points(firstVals,col='red')
+  }
+  print('Optimization Complete')
+}
 
+optimizeUtilities(verbose = F)
+
+#You can save your progress using the following (save your probabilities too!)
+# save(stateStore,actionStore,
+#      optActStore,staticTurnOverStates,file = 'TutorialUtilities.RData')
+# save(probArray,file = 'ProbArrayStorage.Rdata')
 
 
 

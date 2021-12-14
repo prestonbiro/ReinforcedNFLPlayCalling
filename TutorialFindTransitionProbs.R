@@ -44,8 +44,8 @@ setwd('~/GithubTutorial')
 source('TutorialHelperFunctions.R')
 
 #One variable needed, and its a big one. Will be discussed once we get to the 
-#   advGetAndGiveProb function
-advProbArray = array(NA,dim = c(2,4,99,99,201))
+#   getAndGiveProb function
+probArray = array(NA,dim = c(2,4,99,99,201))
 
 #The following link is where I got the numbers for lost fumble rate on pass and
 #   run plays respectively. This is used for turnover probabilities. In general
@@ -567,7 +567,7 @@ findNegPlayProbs <- function(curLOS,actionChoice){
 #   state if and only if it has not been calculated previously, and will store
 #   the results of those calculations. If they have calculated the probabilities
 #   before, the function will simply pull it from storage. 
-advGetAndGiveProb <- function(DOWN,DIST,LOS,reset = F){
+getAndGiveProb <- function(DOWN,DIST,LOS,reset = F){
   #Will find probabilities if they haven't been calculated previously for a 
   #   specific down, distance, and los. Does include all resulting line of 
   #   scrimmage information for turnovers and stuff
@@ -577,7 +577,7 @@ advGetAndGiveProb <- function(DOWN,DIST,LOS,reset = F){
      (LOS > 99)) print(paste('Error: DOWN=',DOWN,'DIST=',DIST,'LOS=',LOS))
   
   #If we've already calculated the probability, lets grab that
-  tempProb = advProbArray[,DOWN,DIST,LOS,]
+  tempProb = probArray[,DOWN,DIST,LOS,]
   if(any(is.na(tempProb)) | reset){
     tempProbsPass = findProbs(DOWN,DIST,LOS,'pass')$df
     tempProbsRun = findProbs(DOWN,DIST,LOS,'run')$df
@@ -607,19 +607,19 @@ advGetAndGiveProb <- function(DOWN,DIST,LOS,reset = F){
     run$Prob = run$Prob/sum(run$Prob)
     pass$Prob = pass$Prob/sum(pass$Prob)
     
-    advProbArray[1,DOWN,DIST,LOS,] <<- pass$Prob
-    advProbArray[2,DOWN,DIST,LOS,] <<- run$Prob
-    tempProb = advProbArray[,DOWN,DIST,LOS,]
+    probArray[1,DOWN,DIST,LOS,] <<- pass$Prob
+    probArray[2,DOWN,DIST,LOS,] <<- run$Prob
+    tempProb = probArray[,DOWN,DIST,LOS,]
   }
   return(list(RunProb = data.frame(X = 100:-100,Prob = tempProb[2,]),
               PassProb = data.frame(X = 100:-100,Prob = tempProb[1,])))
 }
 
-advGetAndGiveProb(1,10,80)
+getAndGiveProb(1,10,80)
 
 #Once you're comfortable with how this function works, you can use the following
 #   line to load a bunch of precalculated probabilities so you don't have to 
 #   take the time to do it on your own.
 
-# load('AdvProbArrayStorage.Rdata')
+# load('ProbArrayStorage.Rdata')
 
