@@ -1,7 +1,7 @@
 # ReinforcedNFLPlayCalling
-Code to accompany Biro and Walker's 2021 Paper - A Reinforcement Learning Based Approach to Play Calling in Football
+Code to accompany Biro and Walker's 2022 Paper - A Reinforcement Learning Based Approach to Play Calling in Football
 
-For access to the paper, see: LINK TO PAPER HERE
+For access to the paper, see: https://www.degruyter.com/document/doi/10.1515/jqas-2021-0029/html
 
 This Github contains three R scripts that incorporate a tutorial to using the methods described in Biro and Walker's 2021 Paper - A Reinforcement Learning Based Approach to Play Calling in Football. Additionally, data has been provided to save the users' time in the optimization process. To follow the tutorial sequentially, download all scripts and follow them in the following order:
 
